@@ -165,9 +165,14 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 }
 
 // My functions
+struct car
+{
+    double distance;
+    double speed;
+};
+
 vector<double> distanceFrontRear(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
 {
-
     vector<double> distance_front;
     vector<double> distance_rear;
     vector<double> distance;
@@ -320,6 +325,9 @@ int main() {
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	
+          	const double space_front = 30;
+          	const double space_rear = 50;
+          	
             cout << "Theoretical lane " << lane << endl;
             double actual_lane = (car_d - 2) / 4;
           	cout << "Actual lane " << actual_lane  << endl;
@@ -361,7 +369,7 @@ int main() {
                     if (lane > 0)
                     {
                         distance_change_lane = distanceFrontRear(car_s, lane-1, prev_size, sensor_fusion);
-                        if ((distance_change_lane[0] > 30) && (distance_change_lane[1] > -30))
+                        if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
                         {
                             FSM_state = go_left;
                             doit = true;
@@ -374,7 +382,7 @@ int main() {
                             {
                                 distance_change_lane = distanceFrontRear(car_s, lane+1, prev_size, sensor_fusion);
                                 // There's enough room
-                                if ((distance_change_lane[0] > 30) && (distance_change_lane[1] > -30))
+                                if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
                                 {
                                     FSM_state = go_right;
                                     doit = true;
@@ -400,7 +408,7 @@ int main() {
                         {
                             distance_change_lane = distanceFrontRear(car_s, lane+1, prev_size, sensor_fusion);
                             // There's enough room
-                            if ((distance_change_lane[0] > 30) && (distance_change_lane[1] > -30))
+                            if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
                             {
                                 FSM_state = go_right;
                                 doit = true;
@@ -554,7 +562,7 @@ int main() {
           	
           	// Add the remaining points, the newly calculated one, with fresh decisions
             for (int i = 0; i < 50-previous_path_x.size(); i++) {
-                double N = (target_dist/(0.02*ref_vel/2.24));
+                double N = (target_dist/(0.02*ref_vel/2.23694));
                 double x_point = x_add_on + (target_x)/N;
                 double y_point = s(x_add_on);
                 x_add_on = x_point;
