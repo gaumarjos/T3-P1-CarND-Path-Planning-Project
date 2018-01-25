@@ -171,11 +171,14 @@ struct car
     double speed;
 };
 
-vector<double> distanceFrontRear(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
+vector<car> environmentFrontRear(double car_s, double car_v, int lane, int prev_size, vector<vector<double>> sensor_fusion)
 {
+
     vector<double> distance_front;
+    vector<double> speed_front;
     vector<double> distance_rear;
-    vector<double> distance;
+    vector<double> speed_rear;
+    vector<car> closest;
 
     // Check the environment
     for (int i=0; i < sensor_fusion.size(); i++) {
@@ -194,46 +197,107 @@ vector<double> distanceFrontRear(double car_s, int lane, int prev_size, vector<v
   	        // Is the car in front of me and closer than 30m?
   	        if (check_car_s > car_s) {
   	            distance_front.push_back((check_car_s-car_s));
+  	            speed_front.push_back(check_speed - car_v);
   	        }
   	        else if (check_car_s < car_s) {
   	            distance_rear.push_back((check_car_s-car_s));
+  	            speed_rear.push_back(check_speed - car_v);
   	        }
   	    }
   	}
   	
-  	// Sort front
+  	// Closest ahead
+  	struct car front_car;
   	if (distance_front.size() > 0)
   	{
-  	    sort(distance_front.begin(), distance_front.end());
-  	    distance.push_back(distance_front[0]);
+  	    vector<double>::iterator it;
+        it = min_element(distance_front.begin(), distance_front.end());
+        int id = distance(distance_front.begin(), it);
+        front_car = {distance_front[id], speed_front[id]};
   	}
   	else
   	{
-  	    distance.push_back(0);
+  	    front_car = {999, 999};
     }
+    closest.push_back(front_car);
     
-    // Sort rear
+    // Closest back
+    struct car rear_car;
   	if (distance_rear.size() > 0)
   	{
-  	    sort(distance_rear.rbegin(), distance_rear.rend());
-  	    distance.push_back(distance_rear[0]);
+  	    vector<double>::iterator it;
+        it = max_element(distance_rear.begin(), distance_rear.end());
+        int id = distance(distance_rear.begin(), it);
+        rear_car = {distance_rear[id], speed_rear[id]};
   	}
   	else
   	{
-  	    distance.push_back(0);
+  	    rear_car = {-999, 0};
     }
+    closest.push_back(rear_car);
     
-    //
-    cout.precision(3);
-    cout << "Lane " << lane << ": F " << distance[0] << "\t R " << distance[1] << endl;
-    
-    return distance;
+    cout << "Lane " << lane << ": F " << closest[0].distance << "\t R " << closest[1].distance << endl;
+
+    return closest;
 }
 
+double cost(int current_lane, int lane, vector<car> env)
+{
+    const double illegal = 10000;
+    const double huge = 1000;
+    const double large = 100;
+    const double space_ahead = 20;
+    const double space_back = -8;
 
-
-
-
+    // LANE
+    // The lane itself is irrelevant, but it the lane is out of the drivable area, the cost is huge.
+    double lane_cost = 0;
+    if ((lane < 0) || (lane > 2))
+    {
+        lane_cost = illegal;
+    }
+    
+    // SPACE AHEAD
+    double space_ahead_cost = 0;
+    if (env[0].distance < space_ahead)
+    {
+        space_ahead_cost = huge;
+    }
+    else
+    {
+        space_ahead_cost = huge * exp(-0.1*(env[0].distance-space_ahead));
+    }
+    
+    // SPACE BACK
+    // This cost doesn't apply if it's the lane we're in as other cars are expected to see us
+    double space_back_cost = 0;
+    if (current_lane != lane)
+    {
+        if (env[1].distance > -15)
+        {
+            space_back_cost = 2*huge;
+        }
+        else
+        {
+            space_back_cost = 2*huge * exp(0.1*(env[1].distance-space_back));
+        }
+    }
+    
+    // SPEED AHEAD
+    double speed_ahead_cost = 0;
+    if (env[0].speed < 0)
+    {
+        speed_ahead_cost = large;
+    }
+    else
+    {
+        speed_ahead_cost = large * exp(-env[0].speed);
+    }
+    
+    
+    double cost = lane_cost + space_ahead_cost + space_back_cost + speed_ahead_cost;
+    return cost;
+}
 
 
 int main() {
@@ -275,12 +339,13 @@ int main() {
   
   // Constants
   int lane = 1;
-  int destination_lane = lane;
   double ref_vel = 0;
   enum state_type {keep, take_action, prepare_go_left, prepare_go_right, go_left, go_right};
   state_type FSM_state = keep;
+  const double speed_limit = 49;
+  const double acceleration_base = 0.224;
   
-  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy, &ref_vel, &lane, &destination_lane, &FSM_state](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy, &ref_vel, &speed_limit, &acceleration_base, &lane, &FSM_state](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -325,16 +390,24 @@ int main() {
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	
-          	const double space_front = 30;
-          	const double space_rear = 50;
+          	// EXPERIMENT
+          	/*
+          	cout << "EXPERIMENT" << endl;
+          	struct car davanti = {999, 999};
+          	struct car dietro = {-45, 0};
+          	vector<car> prova;
+          	prova.push_back(davanti);
+          	prova.push_back(dietro);
+          	cout << cost(1,2,prova) << endl;
+            */
           	
-            cout << "Theoretical lane " << lane << endl;
             double actual_lane = (car_d - 2) / 4;
-          	cout << "Actual lane " << actual_lane  << endl;
+          	//cout << "Actual lane " << actual_lane  << endl;
+          	//cout << "Theoretical lane " << lane << endl;
           	
           	// Toggle used to make sure the lane update happens only once for maneuver.
           	bool doit = false;
-          	
+
             
             // FSM STATUS UPDATE, dependent on what's around
             int prev_size = previous_path_x.size();
@@ -343,126 +416,106 @@ int main() {
           	    car_s = end_path_s;
           	}
           	
-          	if (FSM_state == keep) 
-          	{
-                // Check if there's something in front of me
-                vector<double> distance = distanceFrontRear(car_s, lane, prev_size, sensor_fusion);
-                if ((distance[0] > 0) && (distance[0] < 30)) {
-                    FSM_state = take_action;
-                }
-            }
+          	// Always keep an eye on what is in front of me
+          	// For left and right lanes it is sufficient to run this code in the "take_action" state only. I'm doing it here as it's better for debugging as it always rpesents the situation around the ego car.
+            vector<car> env = environmentFrontRear(car_s, ref_vel, lane, prev_size, sensor_fusion);
+            vector<car> env_go_left = environmentFrontRear(car_s, ref_vel, lane-1, prev_size, sensor_fusion);
+            vector<car> env_go_right = environmentFrontRear(car_s, ref_vel, lane+1, prev_size, sensor_fusion);
+            // Calculate costs and find the minimum
+            vector<double> costs = {cost(lane, lane, env),
+                                    cost(lane, lane-1, env_go_left),
+                                    cost(lane, lane+1, env_go_right)};
+            vector<double>::iterator it = min_element(costs.begin(), costs.end());
+            int min_cost_id = distance(costs.begin(), it);
             
-            else if (FSM_state == take_action)
+            cout << "\033[1;33mCosts:";
+            for (int j=0; j<3; j++)
             {
-                // Check if there's something in front of me
-                vector<double> distance = distanceFrontRear(car_s, lane, prev_size, sensor_fusion);
-                // If there's nothing, just go back to keep this lane
-                if (distance[0] > 30)
-                {
-                    FSM_state = keep;
-                }
-                // Start checking if we can take over, check on the left first
-                else
-                {
-                    vector<double> distance_change_lane;
-                    // If we're not in the leftmost lane
-                    if (lane > 0)
+                cout << setw(10) << costs[j];
+            }
+            cout << "\033[0m" << endl;
+
+            switch (FSM_state)
+            {
+                case keep:
+                    // Check if there's something in front of me
+                    if ((env[0].distance > 0) && (env[0].distance < 30))
                     {
-                        distance_change_lane = distanceFrontRear(car_s, lane-1, prev_size, sensor_fusion);
-                        if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
+                        FSM_state = take_action;
+                    }
+                    break;
+                
+                case take_action:
+                    // If there's nothing in front, just roll back to keep
+                    if (env[0].distance > 30)
+                    {
+                        FSM_state = keep;
+                    }
+                    // Start checking if we can take over, check on the left first
+                    else
+                    {
+                        if (min_cost_id == 0)
+                        {
+                            FSM_state = take_action;
+                        }
+                        else if (min_cost_id == 1)
                         {
                             FSM_state = go_left;
                             doit = true;
                         }
-                        // No room on the left, try to go right
-                        else
+                        else if (min_cost_id == 2)
                         {
-                            // If I'm in the rightmost lane already
-                            if (lane < 2)
-                            {
-                                distance_change_lane = distanceFrontRear(car_s, lane+1, prev_size, sensor_fusion);
-                                // There's enough room
-                                if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
-                                {
-                                    FSM_state = go_right;
-                                    doit = true;
-                                }
-                                // Stay where you are and wait
-                                else
-                                {
-                                    FSM_state = take_action;
-                                }
-                            }
-                            // Stay where you are and wait
-                            else
-                            {
-                                FSM_state == take_action;
-                            }
+                            FSM_state = go_right;
+                            doit = true;
                         }
                     }
-                    // If we are in the leftmost lane, try right first
-                    else
+                    break;
+                    
+                case go_left:
+                    if ((actual_lane > (lane-0.2)) && (actual_lane < (lane+0.2)))
                     {
-                        // If I'm in the rightmost lane already
-                        if (lane < 2)
-                        {
-                            distance_change_lane = distanceFrontRear(car_s, lane+1, prev_size, sensor_fusion);
-                            // There's enough room
-                            if ((distance_change_lane[0] > space_front) && (distance_change_lane[1] > -space_rear))
-                            {
-                                FSM_state = go_right;
-                                doit = true;
-                            }
-                            // Stay where you are and wait
-                            else
-                            {
-                                FSM_state = take_action;
-                            }
-                        }
-                        else
-                        // Stay where you are and wait, this should never happen as we jumped here because we were in the leftmost lane, I just add this for completeness.
-                        {
-                            FSM_state == take_action;
-                        }
+                        FSM_state = keep;
                     }
-                }
-            }
-            
-            else if (FSM_state == go_left)
-            {
-                if ((actual_lane > (lane-0.2)) && (actual_lane < (lane+0.2)))
-                {
-                    FSM_state = keep;
-                }
-            }
+                    break;
           	
-          	else if (FSM_state == go_right)
-            {
-                if ((actual_lane > (lane-0.2)) && (actual_lane < (lane+0.2)))
-                {
-                    FSM_state = keep;
-                }
+          	    case go_right:
+                    if ((actual_lane > (lane-0.2)) && (actual_lane < (lane+0.2)))
+                    {
+                        FSM_state = keep;
+                    }
+                    break;
             }
           	
 
             // FSM ACTION
+            const double braking_intensity_0m = 4;
+            const double braking_intensity_30m = 1.0;
+            double intensity = braking_intensity_0m - (braking_intensity_30m/30) *env[0].distance;
             switch (FSM_state)
             {
                 case keep:
-                    std::cout << "KEEP" << endl;
+                    cout << "\033[1;32mKEEP\033[0m\n";
                     // If I'm going too slow, accelerate to target speed
-              	    if (ref_vel < 49.5) {
-                  	    ref_vel += 0.224;
+              	    if (ref_vel < speed_limit) {
+                  	    ref_vel += acceleration_base*2;
                   	}
+                  	// Make sure I'm right in the middle of the lane
+                  	lane = round(actual_lane);
                     break;
                     
                 case take_action:
-                    std::cout << "TAKE ACTION" << endl;
-                    ref_vel -= 0.224;
+                    cout << "\033[1;35mTAKE ACTION\033[0m\n";
+                    // Brake and think what to do
+                    cout << "Braking " << intensity << endl;
+                    ref_vel -= acceleration_base*intensity;
                     break;
-                    
+ 
                 case go_left:
-                    std::cout << "GO LEFT" << endl;
+                    cout << "\033[1;31mGO LEFT\033[0m\n";
+                    // Accelerate and change lane
+                    if (ref_vel < (speed_limit-2)) {
+                  	    ref_vel += acceleration_base*2;
+                  	}
                     if (doit)
                     {
          	            lane -= 1;
@@ -471,20 +524,20 @@ int main() {
                     break;
                     
                 case go_right:
-                    std::cout << "GO RIGHT" << endl;
+                    cout << "\033[1;34mGO RIGHT\033[0m\n";
+                    // Accelerate and change lane
+                    if (ref_vel < (speed_limit-2)) {
+                  	    ref_vel += acceleration_base*2;
+                  	}
       	            if (doit)
                     {
          	            lane += 1;
          	            doit = false;
          	        }
                     break;
-                        
+       
             }
 
-          	
-          	
-          	
-          	
           	// Create a list of sparsely spaced waypoints
           	vector<double> ptsx;
           	vector<double> ptsy;
